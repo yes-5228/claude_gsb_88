@@ -11,7 +11,7 @@ import { useToast } from '../../components/Toast';
 import { useAsync } from '../../hooks/useAsync';
 import { useForm, type FormErrors } from '../../hooks/useForm';
 import { useMeta } from '../../providers/MetaProvider';
-import type { CleaningRecord, RecordPayload } from '../../types/domain';
+import type { CleaningRecord, RecordPayload, RecordUpdatePayload } from '../../types/domain';
 import { isDateString, today } from '../../utils/format';
 import { optionLabel } from '../../utils/options';
 
@@ -30,6 +30,8 @@ interface RecordFormValues {
   problemFound: string;
   recorderName: string;
   remark: string;
+  editorName: string;
+  changeReason: string;
 }
 
 function emptyForm(taskId = ''): RecordFormValues {
@@ -47,7 +49,9 @@ function emptyForm(taskId = ''): RecordFormValues {
     safetyMeasures: '',
     problemFound: '',
     recorderName: '',
-    remark: ''
+    remark: '',
+    editorName: '',
+    changeReason: ''
   };
 }
 
@@ -66,7 +70,10 @@ function toFormValues(record: CleaningRecord): RecordFormValues {
     safetyMeasures: record.safetyMeasures,
     problemFound: record.problemFound,
     recorderName: record.recorderName,
-    remark: record.remark
+    remark: record.remark,
+    // 修改人默认取当前记录人，修改原因每次都必须重新填写。
+    editorName: record.recorderName,
+    changeReason: ''
   };
 }
 
@@ -89,7 +96,15 @@ function toPayload(values: RecordFormValues): RecordPayload {
   };
 }
 
-function validate(values: RecordFormValues): FormErrors<RecordFormValues> {
+function toUpdatePayload(values: RecordFormValues): RecordUpdatePayload {
+  return {
+    ...toPayload(values),
+    editorName: values.editorName.trim(),
+    changeReason: values.changeReason.trim()
+  };
+}
+
+function validate(values: RecordFormValues, isEdit: boolean): FormErrors<RecordFormValues> {
   const errors: FormErrors<RecordFormValues> = {};
   if (!values.taskId) {
     errors.taskId = '请选择关联清淤任务';
@@ -121,6 +136,16 @@ function validate(values: RecordFormValues): FormErrors<RecordFormValues> {
   if (!values.recorderName.trim()) {
     errors.recorderName = '记录人不能为空';
   }
+  if (isEdit) {
+    if (!values.editorName.trim()) {
+      errors.editorName = '修改人不能为空';
+    }
+    if (!values.changeReason.trim()) {
+      errors.changeReason = '修改原因不能为空，将写入修改留痕';
+    } else if (values.changeReason.trim().length > 200) {
+      errors.changeReason = '修改原因不能超过 200 字';
+    }
+  }
   return errors;
 }
 
@@ -149,18 +174,21 @@ export function RecordFormPage() {
 
   const submit = () => {
     void form.handleSubmit(async () => {
-      const payload = toPayload(form.values);
       if (isEdit) {
-        await recordApi.update(id, payload);
-        toast.success('清淤记录已保存');
+        await recordApi.update(id, toUpdatePayload(form.values));
+        toast.success('清淤记录已保存，修改留痕已同步写入');
         navigate(`/records/${id}`);
       } else {
-        const created = await recordApi.create(payload);
+        const created = await recordApi.create(toPayload(form.values));
         toast.success('清淤记录已录入');
         navigate(`/records/${created.id}`);
       }
-    }, validate);
+    }, (values) => validate(values, isEdit));
   };
+
+  // 修改窗口由后端按任务环节下发：窗口关闭后表单只读，不能提交。
+  const editWindow = detail.data?.editWindow;
+  const windowClosed = isEdit && editWindow !== undefined && !editWindow.open;
 
   // 只有待开工 / 清淤中的任务可以录入清淤记录。
   const assignable = (tasks.data?.list ?? []).filter(
@@ -190,6 +218,12 @@ export function RecordFormPage() {
       />
 
       <StateBlock loading={isEdit && detail.loading} error={isEdit ? detail.error : ''} onRetry={detail.reload}>
+        {windowClosed ? (
+          <div className="alert alert-warn">
+            <p>{editWindow?.reason || '修改窗口已关闭，该记录只能查看历史版本。'}</p>
+          </div>
+        ) : null}
+
         {form.serverError ? (
           <div className="alert alert-error">
             <p>{form.serverError}</p>
@@ -339,7 +373,40 @@ export function RecordFormPage() {
               />
             </FormField>
           </div>
+        </SectionCard>
 
+        {isEdit ? (
+          <SectionCard title="修改留痕" subtitle="每次修改都会保存修改前的数值、修改人、时间与原因，保存后可在详情页对比任意两个版本">
+            <div className="form-grid">
+              <FormField label="修改人" required error={form.errors.editorName}>
+                <input
+                  className="input"
+                  value={form.values.editorName}
+                  onChange={(event) => form.setValue('editorName', event.target.value)}
+                />
+              </FormField>
+              <FormField label="修改原因" required span={2} error={form.errors.changeReason} hint="将随本次修改一并留痕，不超过 200 字">
+                <input
+                  className="input"
+                  value={form.values.changeReason}
+                  placeholder="例如 按吸污车称重小票复核后修正清淤量"
+                  onChange={(event) => form.setValue('changeReason', event.target.value)}
+                />
+              </FormField>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => navigate(-1)}>
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={form.submitting || windowClosed}>
+                {windowClosed ? '窗口已关闭' : form.submitting ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </SectionCard>
+        ) : null}
+
+        {!isEdit ? (
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => navigate(-1)}>
               取消
@@ -348,7 +415,7 @@ export function RecordFormPage() {
               {form.submitting ? '保存中…' : '保存'}
             </button>
           </div>
-        </SectionCard>
+        ) : null}
       </StateBlock>
     </form>
   );

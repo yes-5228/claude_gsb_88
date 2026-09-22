@@ -967,6 +967,39 @@ h3 {
   color: var(--color-text-muted);
 }
 
+/* ---------- 版本留痕与对比 ---------- */
+.version-compare {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.compare-bar .filter-item {
+  min-width: 180px;
+}
+
+.diff-changed td {
+  background: #fff7ed;
+}
+
+.diff-value-old {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.diff-value-new {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1200px) {
   .stat-grid {

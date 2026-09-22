@@ -1,4 +1,4 @@
-// 清淤记录详情：现场数据明细 + 所属任务信息。
+// 清淤记录详情：现场数据明细 + 修改留痕与版本对比 + 所属任务信息。
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toErrorMessage } from '../../api/client';
@@ -12,6 +12,7 @@ import { StateBlock } from '../../components/StateBlock';
 import { useToast } from '../../components/Toast';
 import { useAsync } from '../../hooks/useAsync';
 import { formatDate, formatDateTime, formatLength, formatNumber, formatVolume } from '../../utils/format';
+import { RecordVersionsCard } from './RecordVersionsCard';
 
 export function RecordDetailPage() {
   const params = useParams();
@@ -29,6 +30,9 @@ export function RecordDetailPage() {
 
   const record = detail.data?.record;
   const task = detail.data?.task;
+  const editWindow = detail.data?.editWindow;
+  const currentVersion = detail.data?.currentVersion ?? 1;
+  const editable = editWindow?.open ?? false;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -48,8 +52,13 @@ export function RecordDetailPage() {
     <div className="page">
       <PageHeader
         title={record ? `${record.code} 清淤记录` : '清淤记录详情'}
-        description="清淤记录是验收结论的计量依据，任务完工报验后将不能再修改。"
-        extra={task ? <StatusTag list="taskStatuses" value={task.status} /> : null}
+        description="清淤记录是验收结论的计量依据，修改窗口内可调整并全程留痕，所有统计按最新版本计算。"
+        extra={
+          <>
+            <span className="tag tag-info">当前版本 v{currentVersion}</span>
+            {task ? <StatusTag list="taskStatuses" value={task.status} /> : null}
+          </>
+        }
         actions={
           <>
             <button type="button" className="btn btn-ghost" onClick={() => navigate('/records')}>
@@ -58,12 +67,17 @@ export function RecordDetailPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={!record}
+              disabled={!record || !editable}
               onClick={() => navigate(`/records/${id}/edit`)}
             >
               编辑
             </button>
-            <button type="button" className="btn btn-danger" disabled={!record} onClick={() => setConfirmOpen(true)}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={!record || !editable}
+              onClick={() => setConfirmOpen(true)}
+            >
               删除
             </button>
           </>
@@ -73,12 +87,18 @@ export function RecordDetailPage() {
       <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload} empty={!record} emptyText="清淤记录不存在">
         {record ? (
           <>
-            <div className="alert alert-info">
-              <p>
-                修改与删除限制：任务处于「待开工」或「清淤中」时才能调整清淤记录；一旦该记录被验收记录引用，
-                或任务已完工报验，后端将拒绝修改。
-              </p>
-            </div>
+            {editable ? (
+              <div className="alert alert-info">
+                <p>
+                  修改窗口开放中：任务处于「待开工」或「清淤中」时可调整记录，每次修改都会保存修改前的数值、
+                  修改人、时间与原因；任务完工报验后窗口关闭，被验收引用的记录只能查看历史版本。
+                </p>
+              </div>
+            ) : (
+              <div className="alert alert-warn">
+                <p>{editWindow?.reason || '修改窗口已关闭，该记录只能查看历史版本。'}</p>
+              </div>
+            )}
 
             <SectionCard title="现场数据" subtitle={`录入于 ${formatDateTime(record.createdAt)}，最近更新 ${formatDateTime(record.updatedAt)}`}>
               <InfoList
@@ -100,6 +120,8 @@ export function RecordDetailPage() {
                 ]}
               />
             </SectionCard>
+
+            <RecordVersionsCard recordId={id} />
 
             <SectionCard
               title="所属任务"
@@ -138,7 +160,7 @@ export function RecordDetailPage() {
         danger
         busy={deleting}
         confirmText="确认删除"
-        message={<p>删除后该条清淤数据将从任务汇总中扣除，且不可恢复。</p>}
+        message={<p>删除后该条清淤数据及其全部修改留痕将从任务汇总中扣除，且不可恢复。</p>}
         onConfirm={handleDelete}
         onCancel={() => setConfirmOpen(false)}
       />

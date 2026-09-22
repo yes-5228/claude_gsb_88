@@ -67,6 +67,18 @@ func HasAcceptanceForRecord(ctx context.Context, db *gorm.DB, recordID uint) (bo
 	return exists(ctx, db, TableAcceptanceRecords, "cleaning_record_id = ?", recordID)
 }
 
+// TaskStatusByID 查询任务当前状态；任务不存在时返回空字符串。
+//
+// 修改窗口的校验需要在事务内复查任务环节，调用方可以传入事务句柄。
+func TaskStatusByID(ctx context.Context, db *gorm.DB, taskID uint) (string, error) {
+	var status string
+	err := db.WithContext(ctx).Table(TableCleaningTasks).
+		Where("id = ?", taskID).
+		Limit(1).
+		Pluck("status", &status).Error
+	return status, err
+}
+
 // TaskStatsForSegment 汇总某管段下各状态的任务数量。
 func TaskStatsForSegment(ctx context.Context, db *gorm.DB, segmentID uint) (TaskStats, error) {
 	type row struct {

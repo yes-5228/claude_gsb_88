@@ -29,20 +29,28 @@ func (r *Repository) DB() *gorm.DB {
 	return r.db
 }
 
+// Transaction 在事务中执行写入，保证修改与留痕同时成功或同时失败。
+func (r *Repository) Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(fn)
+}
+
 // Create 新增记录。
 func (r *Repository) Create(ctx context.Context, record *CleaningRecord) error {
 	return r.db.WithContext(ctx).Create(record).Error
 }
 
-// Save 保存记录全部字段。
-func (r *Repository) Save(ctx context.Context, record *CleaningRecord) error {
+// SaveInTx 在给定事务中保存记录全部字段。
+func (r *Repository) SaveInTx(ctx context.Context, tx *gorm.DB, record *CleaningRecord) error {
 	record.UpdatedAt = time.Now()
-	return r.db.WithContext(ctx).Save(record).Error
+	return tx.WithContext(ctx).Save(record).Error
 }
 
-// Delete 物理删除记录。
-func (r *Repository) Delete(ctx context.Context, id uint) error {
-	result := r.db.WithContext(ctx).Delete(&CleaningRecord{}, id)
+// DeleteWithRevisionsInTx 在给定事务中删除记录及其全部留痕。
+func (r *Repository) DeleteWithRevisionsInTx(ctx context.Context, tx *gorm.DB, id uint) error {
+	if err := tx.WithContext(ctx).Where("record_id = ?", id).Delete(&CleaningRecordRevision{}).Error; err != nil {
+		return err
+	}
+	result := tx.WithContext(ctx).Delete(&CleaningRecord{}, id)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -50,6 +58,32 @@ func (r *Repository) Delete(ctx context.Context, id uint) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CreateRevisionInTx 在给定事务中写入一条修改留痕。
+func (r *Repository) CreateRevisionInTx(ctx context.Context, tx *gorm.DB, revision *CleaningRecordRevision) error {
+	return tx.WithContext(ctx).Create(revision).Error
+}
+
+// MaxRevisionVersion 查询记录已留痕的最大版本号，没有留痕时返回 0。
+//
+// 传入事务句柄可保证版本号判断与留痕写入在同一个事务内，避免并发写出重复版本。
+func (r *Repository) MaxRevisionVersion(ctx context.Context, db *gorm.DB, recordID uint) (int, error) {
+	var maxVersion int
+	err := db.WithContext(ctx).Model(&CleaningRecordRevision{}).
+		Where("record_id = ?", recordID).
+		Pluck("COALESCE(MAX(version), 0)", &maxVersion).Error
+	return maxVersion, err
+}
+
+// ListRevisions 查询记录的全部留痕（按版本号升序）。
+func (r *Repository) ListRevisions(ctx context.Context, recordID uint) ([]CleaningRecordRevision, error) {
+	revisions := make([]CleaningRecordRevision, 0)
+	err := r.db.WithContext(ctx).
+		Where("record_id = ?", recordID).
+		Order("version ASC").
+		Find(&revisions).Error
+	return revisions, err
 }
 
 // FindByID 按主键查询记录。
@@ -127,11 +161,6 @@ func (r *Repository) filtered(ctx context.Context, query ListQuery) *gorm.DB {
 		tx = tx.Where("cleaned_at <= ?", query.DateTo.Time)
 	}
 	return tx
-}
-
-// HasAcceptance 记录是否已被验收引用。
-func (r *Repository) HasAcceptance(ctx context.Context, recordID uint) (bool, error) {
-	return refx.HasAcceptanceForRecord(ctx, r.db, recordID)
 }
 
 // TotalsByTask 汇总某个任务的清淤量。

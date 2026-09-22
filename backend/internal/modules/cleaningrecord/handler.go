@@ -61,7 +61,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var req SaveRequest
+	var req UpdateRequest
 	if err := httpx.BindAndValidate(c, &req); err != nil {
 		return err
 	}
@@ -70,6 +70,19 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return err
 	}
 	return httpx.Message(c, "清淤记录已更新", record)
+}
+
+// Versions 记录的全部版本（含当前版本），供详情页对比任意两个版本。
+func (h *Handler) Versions(c *fiber.Ctx) error {
+	id, err := httpx.PathID(c, "id", "清淤记录")
+	if err != nil {
+		return err
+	}
+	versions, err := h.svc.Versions(c.UserContext(), id)
+	if err != nil {
+		return err
+	}
+	return httpx.OK(c, versions)
 }
 
 // Delete 删除记录。

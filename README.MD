@@ -12,7 +12,7 @@
 | 运行看板 | `/` | 跨模块汇总管段、任务、清淤量、验收合格率，含待验收任务与分片区统计 |
 | 管段台账 | `/segments`、`/segments/new`、`/segments/:id`、`/segments/:id/edit` | 管段档案维护、任务概况、清淤履历（计划 → 记录 → 验收） |
 | 清淤任务 | `/tasks`、`/tasks/new`、`/tasks/:id`、`/tasks/:id/edit` | 任务登记、开工 / 完工报验 / 取消、任务下清淤记录与验收结论 |
-| 清淤记录 | `/records`、`/records/new`、`/records/:id`、`/records/:id/edit` | 按次录入现场数据（长度、清淤量、用水量、人数、设备、安全措施等） |
+| 清淤记录 | `/records`、`/records/new`、`/records/:id`、`/records/:id/edit` | 按次录入现场数据（长度、清淤量、用水量、人数、设备、安全措施等），窗口内修改全程留痕，详情页可对比任意两个版本 |
 | 验收记录 | `/acceptances`、`/acceptances/new`、`/acceptances/:id` | 登记验收结论、整改跟踪、复验 |
 | 枚举字典 | `/api/v1/meta/enums` | 后端统一下发全部枚举中文标签，前端不硬编码文案 |
 
@@ -148,8 +148,9 @@ npm run dev            # http://localhost:5173
 | POST | `/api/v1/cleaning-tasks/:id/complete` | 完工报验（清淤中 → 待验收，需至少 1 条清淤记录） |
 | POST | `/api/v1/cleaning-tasks/:id/cancel` | 取消任务（需填写取消原因） |
 | GET | `/api/v1/cleaning-records` | 记录列表（`keyword` `taskId` `segmentId` `method` `weather` `dateFrom` `dateTo`） |
-| GET | `/api/v1/cleaning-records/:id` | 记录详情（含所属任务与管段） |
-| POST/PUT/DELETE | `/api/v1/cleaning-records[/:id]` | 录入 / 修改 / 删除清淤记录 |
+| GET | `/api/v1/cleaning-records/:id` | 记录详情（含所属任务与管段、修改窗口状态、当前版本号） |
+| GET | `/api/v1/cleaning-records/:id/versions` | 记录全部版本（含当前版本），供详情页对比任意两个版本 |
+| POST/PUT/DELETE | `/api/v1/cleaning-records[/:id]` | 录入 / 修改 / 删除清淤记录（修改必须携带修改人与修改原因） |
 | GET | `/api/v1/acceptances` | 验收列表（`keyword` `taskId` `segmentId` `result` `inspectorName` `dateFrom` `dateTo` `pendingRectify`） |
 | GET | `/api/v1/acceptances/:id` | 验收详情（含任务与清淤汇总） |
 | POST | `/api/v1/acceptances` | 登记验收结论 |
@@ -173,6 +174,14 @@ pending ──开工──▶ in_progress ──完工报验──▶ completed 
 
 - 首次录入清淤记录时，任务自动从「待开工」推进到「清淤中」。
 - 完工报验要求任务下至少有 1 条清淤记录。
+- 清淤记录的修改窗口由任务所处环节决定：任务处于「待开工」「清淤中」时窗口开放，
+  完工报验（待验收）后窗口关闭；已被验收记录引用的记录只能查看历史版本。
+  窗口校验在服务端事务内复查，绕过页面直接提交同样会被拒绝。
+- 窗口内的每次修改都会把**修改前的数值、修改人、修改时间、修改原因**写入留痕（`cleaning_record_revisions`），
+  留痕与数值更新在**同一个事务**内完成：数值变了就一定有对应留痕，留痕写不进去数值也不会变。
+  版本号从 1 开始，当前版本号 = 留痕条数 + 1，详情页可对比任意两个版本的字段差异。
+- 所有统计（任务汇总、管段履历、运行看板）都基于记录表当前行实时计算，天然按最新版本口径，
+  记录修改提交后关联数字立即刷新；删除记录时其留痕在同一事务内一并清除。
 - 验收登记要求任务处于「待验收」，且该任务没有已判定合格的验收记录；
   若上一次结论为「需整改」，必须先登记整改完成才能复验。
 - 验收合格会在**同一个事务**内把任务置为「已验收」、写入验收时间，并把管段清淤次数 +1、
@@ -232,6 +241,11 @@ nginx 在后端不可达时会返回 JSON 形式的 502（`code: 50000`），先
 
 **清淤记录录入失败提示任务状态不允许？**
 只有「待开工」「清淤中」的任务可以录入或修改记录；已完工报验、已验收、已取消的任务都会被拒绝。
+
+**修改清淤记录为什么要填修改人和修改原因？**
+窗口内的每次修改都必须留痕：修改前的数值、修改人、修改时间、修改原因会一并保存，
+详情页的「修改留痕」区块可以查看全部版本并对比任意两个版本的差异。
+记录被验收引用或任务完工验收流程后，只能查看历史版本，不能再修改。
 
 **验收时提示评分过低？**
 判定合格要求评分不低于 60 分，低于该阈值请改判为「需整改」或修正评分。

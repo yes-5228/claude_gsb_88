@@ -236,9 +236,44 @@ export interface RecordListItem extends CleaningRecord {
   task: TaskBrief | null;
 }
 
+/** 修改窗口状态：窗口起止由任务所处环节决定，关闭时 reason 给出原因。 */
+export interface RecordEditWindow {
+  open: boolean;
+  reason: string;
+}
+
 export interface RecordDetail {
   record: CleaningRecord;
   task: TaskBrief | null;
+  editWindow: RecordEditWindow;
+  currentVersion: number;
+}
+
+/** 记录的一个历史版本：留痕快照或当前版本（current = true）。 */
+export interface RecordVersion {
+  version: number;
+  current: boolean;
+  editorName: string;
+  changeReason: string;
+  changedAt: string | null;
+  cleanedAt: string | null;
+  lengthM: number;
+  sludgeVolumeM3: number;
+  waterVolumeM3: number;
+  personnelCount: number;
+  method: CleaningMethod | '';
+  equipment: string;
+  weather: Weather | '';
+  sludgeDisposalSite: string;
+  safetyMeasures: string;
+  problemFound: string;
+  recorderName: string;
+  remark: string;
+}
+
+export interface RecordVersionList {
+  currentVersion: number;
+  versions: RecordVersion[];
 }
 
 export interface RecordPayload {
@@ -256,6 +291,12 @@ export interface RecordPayload {
   problemFound: string;
   recorderName: string;
   remark: string;
+}
+
+/** 修改记录时必须额外说明修改人与修改原因，用于生成修改留痕。 */
+export interface RecordUpdatePayload extends RecordPayload {
+  editorName: string;
+  changeReason: string;
 }
 
 // ---------- 验收记录 ----------

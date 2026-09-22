@@ -249,6 +249,23 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 			return err
 		}
 
+		// 修改留痕演示：人民广场合流管任务的记录（records[5]）当前清淤量为 26.3 m³，
+		// 首次录入时为 24.8 m³，复核称重数据后修正，留痕保存的正是修改前的数值。
+		revisions := []cleaningrecord.CleaningRecordRevision{
+			{
+				RecordID: records[5].ID, Version: 1,
+				CleanedAt: today.AddDays(-3), LengthM: 110, SludgeVolumeM3: 24.8, WaterVolumeM3: 70, PersonnelCount: 7,
+				Method: cleaningtask.MethodGrab, Equipment: "抓斗车 1 台、吸污车 1 台、管道检测机器人 1 台", Weather: cleaningrecord.WeatherOvercast,
+				SludgeDisposalSite: "城南污泥消纳中心", SafetyMeasures: "井口设置三脚架与防坠装置，作业人员佩戴安全带",
+				ProblemFound: "H3-04 井段存在树根侵入，已切除并记录待复检", RecorderName: "陈刚",
+				EditorName: "陈刚", ChangeReason: "按吸污车称重小票复核后修正清淤量",
+				CreatedAt: *stamp(today.AddDays(-2), 10),
+			},
+		}
+		if err := tx.Create(&revisions).Error; err != nil {
+			return err
+		}
+
 		acceptances := []acceptance.AcceptanceRecord{
 			{
 				Code:   "YS" + today.AddDays(-25).Format("20060102") + "-0001",
@@ -283,6 +300,7 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 			"segments", len(segments),
 			"tasks", len(tasks),
 			"records", len(records),
+			"revisions", len(revisions),
 			"acceptances", len(acceptances),
 		)
 		return nil

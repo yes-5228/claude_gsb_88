@@ -59,8 +59,14 @@ func (s *Service) Create(ctx context.Context, req SaveRequest) (*CleaningRecord,
 	return nil, httpx.Conflict("记录编号生成冲突，请稍后重试")
 }
 
-// Update 修改清淤记录。任务进入验收流程后不可再修改。
-func (s *Service) Update(ctx context.Context, id uint, req SaveRequest) (*CleaningRecord, error) {
+// Update 修改清淤记录。
+//
+// 修改窗口由任务所处环节决定：任务处于「待开工」「清淤中」时窗口开放，
+// 完工报验（待验收）后窗口关闭；已被验收引用的记录只能查看历史版本。
+// 窗口复查、修改前快照留痕与数值更新在同一个事务内完成：
+// 数值变了就一定有对应留痕，留痕写不进去数值也不会变；
+// 即使绕过页面直接提交，窗口关闭后也会被这里拦下。
+func (s *Service) Update(ctx context.Context, id uint, req UpdateRequest) (*CleaningRecord, error) {
 	record, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, notFound(err)
@@ -68,55 +74,62 @@ func (s *Service) Update(ctx context.Context, id uint, req SaveRequest) (*Cleani
 	if req.TaskID != record.TaskID {
 		return nil, httpx.InvalidState("清淤记录不支持更换所属任务，如需调整请删除后重新录入")
 	}
-	task, err := s.tasks.FindByID(ctx, req.TaskID)
-	if err != nil {
+	if err := validate(req.SaveRequest); err != nil {
 		return nil, err
 	}
-	if !editable(task.Status) {
-		return nil, httpx.InvalidState(fmt.Sprintf(
-			"任务当前状态为「%s」，不能再修改清淤记录", cleaningtask.StatusLabel(task.Status),
-		))
+	editorName := strings.TrimSpace(req.EditorName)
+	if editorName == "" {
+		return nil, httpx.Validation("修改人不能为空")
 	}
-	referenced, err := s.repo.HasAcceptance(ctx, id)
+	changeReason := strings.TrimSpace(req.ChangeReason)
+	if changeReason == "" {
+		return nil, httpx.Validation("修改原因不能为空")
+	}
+
+	err = s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		if err := s.ensureEditable(ctx, tx, record); err != nil {
+			return err
+		}
+		version, err := s.repo.MaxRevisionVersion(ctx, tx, id)
+		if err != nil {
+			return httpx.WrapInternal("查询修改留痕失败", err)
+		}
+		revision := snapshotOf(record, version+1, editorName, changeReason)
+		if err := s.repo.CreateRevisionInTx(ctx, tx, revision); err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return httpx.Conflict("该清淤记录正在被其他人修改，请刷新后重试")
+			}
+			return httpx.WrapInternal("写入修改留痕失败", err)
+		}
+		apply(req.SaveRequest, record)
+		if err := s.repo.SaveInTx(ctx, tx, record); err != nil {
+			return httpx.WrapInternal("修改清淤记录失败", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, httpx.WrapInternal("检查验收引用失败", err)
-	}
-	if referenced {
-		return nil, httpx.InvalidState("该清淤记录已被验收记录引用，不能再修改")
-	}
-	if err := validate(req); err != nil {
 		return nil, err
-	}
-	apply(req, record)
-	if err := s.repo.Save(ctx, record); err != nil {
-		return nil, httpx.WrapInternal("修改清淤记录失败", err)
 	}
 	return record, nil
 }
 
-// Delete 删除清淤记录。
+// Delete 删除清淤记录，留痕随记录在同一事务内一并清除。
 func (s *Service) Delete(ctx context.Context, id uint) error {
 	record, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return notFound(err)
 	}
-	task, err := s.tasks.FindByID(ctx, record.TaskID)
+	err = s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		if err := s.ensureEditable(ctx, tx, record); err != nil {
+			return err
+		}
+		return s.repo.DeleteWithRevisionsInTx(ctx, tx, id)
+	})
 	if err != nil {
-		return err
-	}
-	if !editable(task.Status) {
-		return httpx.InvalidState(fmt.Sprintf(
-			"任务当前状态为「%s」，不能再删除清淤记录", cleaningtask.StatusLabel(task.Status),
-		))
-	}
-	referenced, err := s.repo.HasAcceptance(ctx, id)
-	if err != nil {
-		return httpx.WrapInternal("检查验收引用失败", err)
-	}
-	if referenced {
-		return httpx.InvalidState("该清淤记录已被验收记录引用，不能再删除")
-	}
-	if err := s.repo.Delete(ctx, id); err != nil {
+		var appErr *httpx.AppError
+		if errors.As(err, &appErr) {
+			return err
+		}
 		return notFound(err)
 	}
 	return nil
@@ -171,7 +184,7 @@ func (s *Service) List(ctx context.Context, query ListQuery) ([]ListItem, int64,
 	return items, total, nil
 }
 
-// Detail 记录详情。
+// Detail 记录详情，附带修改窗口状态与当前版本号。
 func (s *Service) Detail(ctx context.Context, id uint) (*DetailResponse, error) {
 	record, err := s.FindByID(ctx, id)
 	if err != nil {
@@ -185,7 +198,141 @@ func (s *Service) Detail(ctx context.Context, id uint) (*DetailResponse, error) 
 	if brief, ok := briefs[record.TaskID]; ok {
 		detail.Task = &brief
 	}
+	window, err := editWindowOf(ctx, s.repo.DB(), record)
+	if err != nil {
+		return nil, err
+	}
+	detail.EditWindow = window
+	version, err := s.repo.MaxRevisionVersion(ctx, s.repo.DB(), id)
+	if err != nil {
+		return nil, httpx.WrapInternal("查询修改留痕失败", err)
+	}
+	detail.CurrentVersion = version + 1
 	return detail, nil
+}
+
+// Versions 查询记录的全部版本（含当前版本），按版本号升序返回，详情页可对比任意两个版本。
+func (s *Service) Versions(ctx context.Context, id uint) (*VersionListResponse, error) {
+	record, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	revisions, err := s.repo.ListRevisions(ctx, id)
+	if err != nil {
+		return nil, httpx.WrapInternal("查询修改留痕失败", err)
+	}
+	versions := make([]RecordVersion, 0, len(revisions)+1)
+	for i := range revisions {
+		versions = append(versions, versionFromRevision(&revisions[i]))
+	}
+	versions = append(versions, versionFromRecord(record, len(revisions)+1))
+	return &VersionListResponse{CurrentVersion: len(revisions) + 1, Versions: versions}, nil
+}
+
+// ensureEditable 在事务内复查修改窗口，窗口关闭时阻断调整。
+func (s *Service) ensureEditable(ctx context.Context, tx *gorm.DB, record *CleaningRecord) error {
+	window, err := editWindowOf(ctx, tx, record)
+	if err != nil {
+		return err
+	}
+	if !window.Open {
+		return httpx.InvalidState(window.Reason)
+	}
+	return nil
+}
+
+// editWindowOf 计算记录的修改窗口状态：窗口起止由任务所处环节决定，
+// 任务完工报验后窗口关闭；被验收引用的记录只能查看历史版本。
+func editWindowOf(ctx context.Context, db *gorm.DB, record *CleaningRecord) (EditWindow, error) {
+	status, err := refx.TaskStatusByID(ctx, db, record.TaskID)
+	if err != nil {
+		return EditWindow{}, httpx.WrapInternal("查询任务状态失败", err)
+	}
+	if status == "" {
+		return EditWindow{}, httpx.NotFound("清淤任务不存在")
+	}
+	if !editable(status) {
+		return EditWindow{Open: false, Reason: fmt.Sprintf(
+			"任务当前状态为「%s」，修改窗口已关闭，清淤记录不能再调整", cleaningtask.StatusLabel(status),
+		)}, nil
+	}
+	referenced, err := refx.HasAcceptanceForRecord(ctx, db, record.ID)
+	if err != nil {
+		return EditWindow{}, httpx.WrapInternal("检查验收引用失败", err)
+	}
+	if referenced {
+		return EditWindow{Open: false, Reason: "该清淤记录已被验收记录引用，只能查看历史版本，不能再调整"}, nil
+	}
+	return EditWindow{Open: true}, nil
+}
+
+// snapshotOf 把记录当前（修改前）的数值保存为一个历史版本。
+func snapshotOf(record *CleaningRecord, version int, editorName, changeReason string) *CleaningRecordRevision {
+	return &CleaningRecordRevision{
+		RecordID:           record.ID,
+		Version:            version,
+		CleanedAt:          record.CleanedAt,
+		LengthM:            record.LengthM,
+		SludgeVolumeM3:     record.SludgeVolumeM3,
+		WaterVolumeM3:      record.WaterVolumeM3,
+		PersonnelCount:     record.PersonnelCount,
+		Method:             record.Method,
+		Equipment:          record.Equipment,
+		Weather:            record.Weather,
+		SludgeDisposalSite: record.SludgeDisposalSite,
+		SafetyMeasures:     record.SafetyMeasures,
+		ProblemFound:       record.ProblemFound,
+		RecorderName:       record.RecorderName,
+		Remark:             record.Remark,
+		EditorName:         editorName,
+		ChangeReason:       changeReason,
+	}
+}
+
+// versionFromRevision 把留痕快照转成版本视图。
+func versionFromRevision(revision *CleaningRecordRevision) RecordVersion {
+	changedAt := revision.CreatedAt
+	return RecordVersion{
+		Version:            revision.Version,
+		Current:            false,
+		EditorName:         revision.EditorName,
+		ChangeReason:       revision.ChangeReason,
+		ChangedAt:          &changedAt,
+		CleanedAt:          revision.CleanedAt,
+		LengthM:            revision.LengthM,
+		SludgeVolumeM3:     revision.SludgeVolumeM3,
+		WaterVolumeM3:      revision.WaterVolumeM3,
+		PersonnelCount:     revision.PersonnelCount,
+		Method:             revision.Method,
+		Equipment:          revision.Equipment,
+		Weather:            revision.Weather,
+		SludgeDisposalSite: revision.SludgeDisposalSite,
+		SafetyMeasures:     revision.SafetyMeasures,
+		ProblemFound:       revision.ProblemFound,
+		RecorderName:       revision.RecorderName,
+		Remark:             revision.Remark,
+	}
+}
+
+// versionFromRecord 把记录当前行转成版本视图（最新版本）。
+func versionFromRecord(record *CleaningRecord, version int) RecordVersion {
+	return RecordVersion{
+		Version:            version,
+		Current:            true,
+		CleanedAt:          record.CleanedAt,
+		LengthM:            record.LengthM,
+		SludgeVolumeM3:     record.SludgeVolumeM3,
+		WaterVolumeM3:      record.WaterVolumeM3,
+		PersonnelCount:     record.PersonnelCount,
+		Method:             record.Method,
+		Equipment:          record.Equipment,
+		Weather:            record.Weather,
+		SludgeDisposalSite: record.SludgeDisposalSite,
+		SafetyMeasures:     record.SafetyMeasures,
+		ProblemFound:       record.ProblemFound,
+		RecorderName:       record.RecorderName,
+		Remark:             record.Remark,
+	}
 }
 
 // editable 判断任务是否处于可以增删改清淤记录的状态。
