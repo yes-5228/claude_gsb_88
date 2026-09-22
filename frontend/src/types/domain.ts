@@ -228,8 +228,42 @@ export interface CleaningRecord {
   problemFound: string;
   recorderName: string;
   remark: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 某一历史版本的业务字段快照，与后端 VersionSnapshot 对应。 */
+export interface RecordVersionSnapshot {
+  cleanedAt: string | null;
+  lengthM: number;
+  sludgeVolumeM3: number;
+  waterVolumeM3: number;
+  personnelCount: number;
+  method: CleaningMethod | '';
+  equipment: string;
+  weather: Weather | '';
+  sludgeDisposalSite: string;
+  safetyMeasures: string;
+  problemFound: string;
+  recorderName: string;
+  remark: string;
+}
+
+/** 单条版本履历：版本元信息 + 完整快照。 */
+export interface RecordRevision {
+  version: number;
+  action: 'create' | 'update';
+  changedBy: string;
+  changeReason: string;
+  changedAt: string;
+  snapshot: RecordVersionSnapshot;
+}
+
+export interface RecordRevisionList {
+  recordId: number;
+  code: string;
+  items: RecordRevision[];
 }
 
 export interface RecordListItem extends CleaningRecord {
@@ -239,6 +273,12 @@ export interface RecordListItem extends CleaningRecord {
 export interface RecordDetail {
   record: CleaningRecord;
   task: TaskBrief | null;
+  /** 当前是否仍处于允许修改的窗口。 */
+  editable: boolean;
+  /** 窗口关闭原因，可编辑时为空。 */
+  lockedReason: string;
+  /** 历史版本数量（含当前版本）。 */
+  revisionCount: number;
 }
 
 export interface RecordPayload {
@@ -256,6 +296,12 @@ export interface RecordPayload {
   problemFound: string;
   recorderName: string;
   remark: string;
+}
+
+/** 修改清淤记录的请求体：在录入字段基础上必须填写修改人与修改原因。 */
+export interface RecordUpdatePayload extends RecordPayload {
+  modifierName: string;
+  changeReason: string;
 }
 
 // ---------- 验收记录 ----------

@@ -45,6 +45,10 @@ func run() error {
 		if err := database.Seed(db, logger); err != nil {
 			return fmt.Errorf("初始化演示数据失败: %w", err)
 		}
+		// 种子数据直接写入主表，再补写首版履历（幂等，只补缺）。
+		if err := database.BackfillRecordRevisions(db); err != nil {
+			return fmt.Errorf("补录清淤记录版本履历失败: %w", err)
+		}
 	}
 
 	app := newApp(cfg, db, logger)

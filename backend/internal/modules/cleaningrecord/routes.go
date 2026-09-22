@@ -14,6 +14,7 @@ func Register(router fiber.Router, db *gorm.DB, tasks TaskGateway) *Service {
 	group.Get("", handler.List)
 	group.Post("", handler.Create)
 	group.Get("/:id", handler.Detail)
+	group.Get("/:id/revisions", handler.Revisions)
 	group.Put("/:id", handler.Update)
 	group.Delete("/:id", handler.Delete)
 

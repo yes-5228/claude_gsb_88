@@ -967,6 +967,140 @@ h3 {
   color: var(--color-text-muted);
 }
 
+/* ---------- 清淤记录版本履历与差异对比 ---------- */
+.header-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.revision-item {
+  position: relative;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-bg);
+}
+
+.revision-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.revision-version {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.revision-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.revision-tag-create {
+  background: #dcfce7;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.revision-tag-update {
+  background: #e0f2fe;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.revision-reason {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.revision-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compare-pickers {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.compare-picker {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.compare-arrow {
+  padding-bottom: 10px;
+  font-size: 16px;
+  color: var(--color-text-muted);
+}
+
+.compare-summary {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-bg);
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.compare-summary-changed {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.diff-table th.diff-field {
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.diff-badge {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.diff-row-changed td,
+.diff-row-changed th {
+  background: #fffbeb;
+}
+
+.diff-old {
+  color: var(--color-danger);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.diff-new {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1200px) {
   .stat-grid {

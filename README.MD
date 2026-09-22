@@ -148,8 +148,11 @@ npm run dev            # http://localhost:5173
 | POST | `/api/v1/cleaning-tasks/:id/complete` | 完工报验（清淤中 → 待验收，需至少 1 条清淤记录） |
 | POST | `/api/v1/cleaning-tasks/:id/cancel` | 取消任务（需填写取消原因） |
 | GET | `/api/v1/cleaning-records` | 记录列表（`keyword` `taskId` `segmentId` `method` `weather` `dateFrom` `dateTo`） |
-| GET | `/api/v1/cleaning-records/:id` | 记录详情（含所属任务与管段） |
-| POST/PUT/DELETE | `/api/v1/cleaning-records[/:id]` | 录入 / 修改 / 删除清淤记录 |
+| GET | `/api/v1/cleaning-records/:id` | 记录详情（含所属任务、修改窗口状态与版本数） |
+| GET | `/api/v1/cleaning-records/:id/revisions` | 记录的版本履历（含每版完整快照，供任意两版对比） |
+| POST | `/api/v1/cleaning-records` | 录入清淤记录（同时写入第 1 版履历） |
+| PUT | `/api/v1/cleaning-records/:id` | 修改清淤记录（须带 `modifierName`、`changeReason`，同事务留痕新版本） |
+| DELETE | `/api/v1/cleaning-records/:id` | 删除清淤记录（连同版本履历一起删除） |
 | GET | `/api/v1/acceptances` | 验收列表（`keyword` `taskId` `segmentId` `result` `inspectorName` `dateFrom` `dateTo` `pendingRectify`） |
 | GET | `/api/v1/acceptances/:id` | 验收详情（含任务与清淤汇总） |
 | POST | `/api/v1/acceptances` | 登记验收结论 |
@@ -179,6 +182,22 @@ pending ──开工──▶ in_progress ──完工报验──▶ completed 
   回写最近清淤日期与运行状态。
 - 删除保护：被任务引用的管段、已产生清淤记录或验收记录的任务、被验收记录引用的清淤记录、
   以及已合格的验收记录，都不允许删除。
+
+### 清淤记录的修改窗口与版本留痕
+
+- **修改窗口按任务所处环节确定**：只有任务处于「待开工 / 清淤中」、且记录未被验收记录引用时
+  才能增删改。窗口状态不依赖前端页面：PUT/DELETE 接口在**数据库事务内再次复检**任务状态与
+  验收引用，任务报验、被验收或绕过页面直接提交都会被拒绝（`40002`）。
+- **修改与留痕同时成立**：每次修改在同一事务内先写入一条新版本履历
+  （修改前/后快照、修改人 `modifierName`、修改时间、修改原因 `changeReason`），再按版本号
+  乐观更新主表；任一步失败整笔回滚，不会出现「数值已变却没有记录」。内容无变化的提交会被拒绝。
+- **主表即最新版本**：履历、任务汇总、管段清淤履历、运行看板都直接聚合 `cleaning_records`
+  主表，统计口径天然为最新版本；履历表 `cleaning_record_revisions` 只用于追溯与对比，不参与统计。
+- **详情页可对比任意两个版本**：`GET /cleaning-records/:id/revisions` 返回每版完整快照，
+  页面支持任选两版逐字段高亮差异。
+- **已被验收引用只能查看历史**：记录一旦被验收记录引用，即使验收需整改把任务退回「清淤中」，
+  也只能查看履历、不能继续修改或删除。
+- **存量数据**：升级迁移时会为没有履历的历史记录幂等补写第 1 版，保证每条记录都至少有一个版本可对比。
 
 ## 校验与错误码
 
@@ -232,6 +251,12 @@ nginx 在后端不可达时会返回 JSON 形式的 502（`code: 50000`），先
 
 **清淤记录录入失败提示任务状态不允许？**
 只有「待开工」「清淤中」的任务可以录入或修改记录；已完工报验、已验收、已取消的任务都会被拒绝。
+窗口关闭后即使绕过页面直接调用 PUT/DELETE 接口，后端也会在事务内复检任务环节并拒绝。
+
+**清淤记录改错了能改吗？历史版本能查吗？**
+窗口内（任务待开工 / 清淤中、且未被验收引用）可继续修改，保存时必须填写修改人与修改原因，
+系统会在同一事务内生成一个新版本并保留旧版本；在记录详情页可查看完整履历并任选两个版本逐字段对比。
+已被验收引用的记录只能查看历史，不能再改。所有汇总与看板始终按最新版本计算。
 
 **验收时提示评分过低？**
 判定合格要求评分不低于 60 分，低于该阈值请改判为「需整改」或修正评分。

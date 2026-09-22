@@ -55,13 +55,26 @@ func (h *Handler) Detail(c *fiber.Ctx) error {
 	return httpx.OK(c, detail)
 }
 
-// Update 修改记录。
+// Revisions 版本履历列表，供详情页对比任意两个版本。
+func (h *Handler) Revisions(c *fiber.Ctx) error {
+	id, err := httpx.PathID(c, "id", "清淤记录")
+	if err != nil {
+		return err
+	}
+	revisions, err := h.svc.Revisions(c.UserContext(), id)
+	if err != nil {
+		return err
+	}
+	return httpx.OK(c, revisions)
+}
+
+// Update 修改记录。必须填写修改人与修改原因，后端按任务环节复检修改窗口。
 func (h *Handler) Update(c *fiber.Ctx) error {
 	id, err := httpx.PathID(c, "id", "清淤记录")
 	if err != nil {
 		return err
 	}
-	var req SaveRequest
+	var req UpdateRequest
 	if err := httpx.BindAndValidate(c, &req); err != nil {
 		return err
 	}
@@ -69,7 +82,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return httpx.Message(c, "清淤记录已更新", record)
+	return httpx.Message(c, "清淤记录已更新并留痕", record)
 }
 
 // Delete 删除记录。
